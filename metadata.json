@@ -1,0 +1,5 @@
+{
+  "name": "Offline Spell Checker",
+  "description": "An offline spelling check application with a custom dictionary admin panel.",
+  "requestFramePermissions": []
+}

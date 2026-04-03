@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "78991956591",
+    "project_id": "gen-lang-client-0898565902",
+    "storage_bucket": "gen-lang-client-0898565902.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:78991956591:android:1e338a1eeb8ab6f1090b9a",
+        "android_client_info": {
+          "package_name": "com.lexiquest.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "78991956591-ipi7setrnj4tuqhseqlk4v3bdpe8mkm8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lexiquest.app",
+            "certificate_hash": "033e2a5db20d7d03314d59664c085129fee6b0e7"
+          }
+        },
+        {
+          "client_id": "78991956591-f98ijc9qi1741bmlqnf7s6ti2q5p8eeb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNxgJ8y3Vi3jh42eCiWnm4-4AyjjTDMhQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "78991956591-f98ijc9qi1741bmlqnf7s6ti2q5p8eeb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
