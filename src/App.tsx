@@ -295,6 +295,42 @@ export default function App() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    const { value } = await Dialog.confirm({
+      title: 'Delete Account',
+      message: 'Are you sure? This will permanently delete your account and all your progress. This action cannot be undone.',
+      okButtonTitle: 'Delete Forever',
+      cancelButtonTitle: 'Cancel',
+    });
+
+    if (value) {
+      try {
+        setAuthLoading(true);
+        // Delete user's document from Firestore if it exists
+        if (user?.uid) {
+          await FirebaseFirestore.deleteDocument({ reference: 'users/' + user.uid }).catch(() => {});
+        }
+        
+        // Delete the user from Firebase Auth
+        await FirebaseAuthentication.deleteUser();
+        
+        // Clear local storage
+        localStorage.clear();
+        setUser(null);
+        setAlertMessage("Your account has been deleted. We're sorry to see you go! ✨");
+      } catch (err: any) {
+        console.error('Delete account error', err);
+        if (err.message?.includes('recent-login')) {
+          setAlertMessage('For security, please sign out and sign in again before deleting your account.');
+        } else {
+          setAlertMessage('Could not delete account. Please try again or contact support.');
+        }
+      } finally {
+        setAuthLoading(false);
+      }
+    }
+  };
+
   // Exit Confirmation & Back Button Logic
   useEffect(() => {
     const setupBackButton = async () => {
@@ -1928,13 +1964,24 @@ export default function App() {
                 </button>
                 <button 
                   onClick={handleSignOut}
-                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-red-50 transition-colors"
+                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-red-50 transition-colors border-b border-slate-100"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center text-red-600">
                       <LogIn className="w-5 h-5 rotate-180" />
                     </div>
                     <span className="font-bold text-red-600">Sign Out</span>
+                  </div>
+                </button>
+                <button 
+                  onClick={handleDeleteAccount}
+                  className="w-full px-6 py-4 flex items-center justify-between hover:bg-rose-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center text-rose-600">
+                      <Trash2 className="w-5 h-5" />
+                    </div>
+                    <span className="font-bold text-rose-600">Delete Account</span>
                   </div>
                 </button>
               </div>
