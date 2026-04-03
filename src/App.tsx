@@ -684,14 +684,45 @@ export default function App() {
 
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinInput === adminPin || (user?.email === 'sandeepfalse456@gmail.com')) {
+    if (pinInput === adminPin || (user?.email === 'sandeepkumarspj290@gmail.com')) {
       setIsAdminAuthenticated(true);
       setPinModalOpen(false);
       setPinInput('');
       setPinError('');
-      setActiveTab('admin');
+      setIsPremium(true);
     } else {
       setPinError('Incorrect PIN');
+    }
+  };
+
+  const handleAddToGlobal = async (entry: DictEntry) => {
+    if (!isAdminAuthenticated) return;
+    setIsImporting(true);
+    try {
+      const word = entry.word.toLowerCase();
+      // Check for duplicate
+      if (sharedWords.some(w => w.word.toLowerCase() === word)) {
+        setAlertMessage(`"${word}" is already in the Global Dictionary.`);
+        return;
+      }
+
+      const meaning = entry.meanings[0].definitions[0].definition;
+      const example = entry.meanings[0].definitions[0].example || 'No example provided.';
+      
+      await FirebaseFirestore.setDocument({
+        reference: 'shared_words/' + word,
+        data: { word, meaning, example }
+      });
+      
+      setAlertMessage(`"${word}" added to Global Dictionary! ✨`);
+      // Update local sharedWords state
+      const { snapshots } = await FirebaseFirestore.getCollection({ reference: 'shared_words' });
+      if (snapshots) setSharedWords(snapshots.map(s => s.data as any));
+    } catch (err) {
+      console.error('Add to global error:', err);
+      setAlertMessage('Failed to add word to Global Dictionary.');
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -916,8 +947,25 @@ export default function App() {
 
   const startTest = (mode: 'listen-mcq' | 'listen-type' | 'visual-mcq' | 'meaning-mcq') => {
     setTestMode(mode);
-    const allWords = [...LEARN_WORDS, ...customWords];
-    const shuffled = allWords.sort(() => 0.5 - Math.random());
+    
+    // Combine all sources: Default, Custom (Local), and Shared (Global)
+    const allSources = [...LEARN_WORDS, ...customWords, ...sharedWords];
+    
+    // Ensure uniqueness by word (case-insensitive)
+    const uniqueMap = new Map();
+    allSources.forEach(item => {
+      const key = item.word.toLowerCase();
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, item);
+      }
+    });
+    
+    const uniqueWordsList = Array.from(uniqueMap.values());
+    
+    // Fully randomize the entire list every time
+    const shuffled = uniqueWordsList.sort(() => 0.5 - Math.random());
+    
+    // Select 10 words for this session
     const selected = shuffled.slice(0, 10).map(item => item.word);
     setTestWords(selected);
 
@@ -1079,22 +1127,32 @@ export default function App() {
     
     setIsImporting(true);
     try {
+      const existingWords = new Set(sharedWords.map(w => w.word.toLowerCase()));
       const lines = bulkImportText.split('\n').filter(line => line.trim());
       const wordsToSave: { word: string, meaning: string, example: string }[] = [];
+      let skippedCount = 0;
       
       lines.forEach(line => {
         const [word, meaning, example] = line.split('|').map(s => s.trim());
         if (word && meaning) {
+          const lWord = word.toLowerCase();
+          if (existingWords.has(lWord)) {
+            skippedCount++;
+            return;
+          }
           wordsToSave.push({
-            word: word.toLowerCase(),
+            word: lWord,
             meaning: meaning || 'Meaning not provided',
             example: example || 'Example not provided'
           });
+          existingWords.add(lWord); // prevent duplicates within the same bulk import
         }
       });
 
       if (wordsToSave.length === 0) {
-        setAlertMessage("No valid words found. Format: Word | Meaning | Example");
+        setAlertMessage(skippedCount > 0 
+          ? `All ${skippedCount} words already exist in the Global Dictionary.`
+          : "No valid words found. Format: Word | Meaning | Example");
         return;
       }
 
@@ -1110,7 +1168,8 @@ export default function App() {
         ));
       }
 
-      setAlertMessage(`Successfully imported ${wordsToSave.length} words to Global Dictionary! ✨`);
+      const msg = `Successfully imported ${wordsToSave.length} words! ✨` + (skippedCount > 0 ? ` (${skippedCount} duplicates skipped)` : "");
+      setAlertMessage(msg);
       setBulkImportText('');
       
       // Update local shared words state
@@ -2137,15 +2196,26 @@ export default function App() {
                           <p className="text-indigo-200 text-sm mt-0.5">{dictResult.phonetic}</p>
                         )}
                       </div>
-                      {dictAudio && (
-                        <button
-                          onClick={() => dictAudio.play()}
-                          className="p-3 bg-white/20 hover:bg-white/30 rounded-full transition-colors"
-                          title="Play pronunciation"
-                        >
-                          <Volume2 className="w-6 h-6" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {isAdminAuthenticated && (
+                          <button
+                            onClick={() => handleAddToGlobal(dictResult)}
+                            disabled={isImporting}
+                            className="bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5"
+                          >
+                            <Plus className="w-3 h-3" /> {isImporting ? 'Adding...' : 'Add to Global'}
+                          </button>
+                        )}
+                        {dictAudio && (
+                          <button
+                            onClick={() => dictAudio.play()}
+                            className="p-3 bg-white/20 hover:bg-white/30 rounded-full transition-colors"
+                            title="Play pronunciation"
+                          >
+                            <Volume2 className="w-6 h-6" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
