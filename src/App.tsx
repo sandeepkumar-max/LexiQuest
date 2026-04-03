@@ -151,6 +151,10 @@ export default function App() {
   const reminderPopoverRef = useRef<HTMLDivElement>(null);
   const reminderBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Bulk Import State
+  const [bulkImportText, setBulkImportText] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
   // Initialize AdMob and setup periodic interstitial
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || isPremium || isAdminAuthenticated) {
@@ -1068,6 +1072,57 @@ export default function App() {
     setNewAdminPin('');
     setPinChangeMessage('PIN successfully changed!');
     setTimeout(() => setPinChangeMessage(''), 3000);
+  };
+
+  const handleBulkImport = async () => {
+    if (!bulkImportText.trim()) return;
+    
+    setIsImporting(true);
+    try {
+      const lines = bulkImportText.split('\n').filter(line => line.trim());
+      const wordsToSave: { word: string, meaning: string, example: string }[] = [];
+      
+      lines.forEach(line => {
+        const [word, meaning, example] = line.split('|').map(s => s.trim());
+        if (word && meaning) {
+          wordsToSave.push({
+            word: word.toLowerCase(),
+            meaning: meaning || 'Meaning not provided',
+            example: example || 'Example not provided'
+          });
+        }
+      });
+
+      if (wordsToSave.length === 0) {
+        setAlertMessage("No valid words found. Format: Word | Meaning | Example");
+        return;
+      }
+
+      // Batch Save (one by one for now but with Promise.all for speed)
+      const batchSize = 100; 
+      for (let i = 0; i < wordsToSave.length; i += batchSize) {
+        const chunk = wordsToSave.slice(i, i + batchSize);
+        await Promise.all(chunk.map(w => 
+          FirebaseFirestore.setDocument({
+            reference: 'shared_words/' + w.word,
+            data: w
+          })
+        ));
+      }
+
+      setAlertMessage(`Successfully imported ${wordsToSave.length} words to Global Dictionary! ✨`);
+      setBulkImportText('');
+      
+      // Update local shared words state
+      const { snapshots } = await FirebaseFirestore.getCollection({ reference: 'shared_words' });
+      if (snapshots) setSharedWords(snapshots.map(s => s.data as any));
+      
+    } catch (err) {
+      console.error('Bulk import error:', err);
+      setAlertMessage('Failed to import words. Check your connection.');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleSubscribe = (type: 'monthly' | 'yearly') => {
@@ -2410,6 +2465,30 @@ export default function App() {
                 </form>
               </div>
 
+              {/* Bulk Import Section */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8">
+                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-indigo-600" />
+                  Bulk Import (Max 1000)
+                </h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  Paste words here. Format: <code className="bg-gray-100 px-1 rounded text-indigo-600">Word | Meaning | Example</code> (one per line)
+                </p>
+                <textarea
+                  value={bulkImportText}
+                  onChange={(e) => setBulkImportText(e.target.value)}
+                  placeholder={"Apple | Seb | An apple a day keeps the doctor away.\nBanana | Kela | Eat a banana for energy."}
+                  className="w-full h-48 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none mb-4 font-mono text-sm"
+                />
+                <button
+                  onClick={handleBulkImport}
+                  disabled={isImporting || !bulkImportText.trim()}
+                  className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  {isImporting ? 'Importing...' : <><Save className="w-5 h-5" /> Start Bulk Import</>}
+                </button>
+              </div>
+
               {/* Custom Words List */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="p-6 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -2459,8 +2538,55 @@ export default function App() {
         )}
 
         {/* Modals Overlay */}
-        {(pinModalOpen || alertMessage || confirmModalOpen || clearConfirmModalOpen) && (
+        {(pinModalOpen || alertMessage || confirmModalOpen || clearConfirmModalOpen || reminderPopoverOpen) && (
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+
+            {/* Reminder Popover */}
+            {reminderPopoverOpen && (
+              <div className="bg-white rounded-[2rem] p-8 w-full max-w-sm shadow-2xl relative z-[60] border border-orange-100 animate-in fade-in zoom-in duration-300">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-black flex items-center gap-2 text-orange-600 uppercase tracking-tight">
+                    <Clock className="w-6 h-6" />
+                    Set Reminder
+                  </h3>
+                  <button 
+                    onClick={() => setReminderPopoverOpen(false)}
+                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="mb-8">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 text-center">Select your study time</p>
+                  <input
+                    type="time"
+                    value={draftReminderTime}
+                    onChange={(e) => setDraftReminderTime(e.target.value)}
+                    className="w-full px-6 py-5 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] focus:border-orange-500 focus:ring-0 outline-none text-3xl font-black text-center text-slate-800"
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <button
+                    onClick={handleSaveReminder}
+                    className="w-full py-4 bg-orange-600 text-white rounded-2xl font-bold hover:bg-orange-700 transition-colors shadow-lg shadow-orange-100 active:scale-95"
+                  >
+                    Save & Enable
+                  </button>
+                  <button
+                    onClick={() => {
+                      setReminderEnabled(false);
+                      localStorage.setItem('reminderEnabled', 'false');
+                      setReminderPopoverOpen(false);
+                    }}
+                    className="w-full py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors active:scale-95"
+                  >
+                    Turn Off
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* PIN Modal */}
             {pinModalOpen && (
