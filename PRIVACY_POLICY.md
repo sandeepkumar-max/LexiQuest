@@ -46,7 +46,7 @@ We retain your data for as long as your account is active.
 
 - **How to Delete Your Account**: You can request the deletion of your account and all associated data at any time.
   - **In-App**: Via the "Delete Account" option in the **Settings/Profile** menu.
-  - **Email**: By contacting us at `sandeepfalse456@gmail.com`.
+  - **Email**: By contacting us at **sandeepkumarspj290@gmail.com**.
 - Once a deletion request is processed, your data will be permanently removed from our active databases.
 
 ## 6. Permissions
@@ -68,4 +68,4 @@ We may update our Privacy Policy from time to time. We will notify you of any ch
 ## 9. Contact Us
 
 If you have any questions about this Privacy Policy, please contact us at:
-**Email**: sandeepfalse456@gmail.com
+**Email**: sandeepkumarspj290@gmail.com

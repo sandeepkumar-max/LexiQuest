@@ -323,7 +323,7 @@ export default function App() {
         if (err.message?.includes('recent-login')) {
           setAlertMessage('For security, please sign out and sign in again before deleting your account.');
         } else {
-          setAlertMessage('Could not delete account. Please try again or contact support.');
+          setAlertMessage('Could not delete account. Please try again or contact support at sandeepkumarspj290@gmail.com.');
         }
       } finally {
         setAuthLoading(false);
