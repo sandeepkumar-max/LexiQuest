@@ -15,6 +15,8 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const ADMIN_EMAIL = 'sandeepfalse456@gmail.com';
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -35,14 +37,15 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
 
         // Save user data to Firestore
         if (result.user) {
-          await FirebaseFirestore.addDocument({
-            reference: 'users',
+          await FirebaseFirestore.setDocument({
+            reference: 'users/' + result.user.uid,
             data: {
               uid: result.user.uid,
               email: result.user.email,
-              role: 'user',
-              createdAt: new Date().toISOString(), // Simplified timestamp or use serverTimestamp if available
-            }
+              role: result.user.email === ADMIN_EMAIL ? 'admin' : 'user',
+              createdAt: new Date().toISOString(),
+            },
+            merge: true
           });
         }
 
@@ -64,15 +67,16 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
       
       // Ensure user document exists in Firestore
       if (result.user) {
-        await FirebaseFirestore.addDocument({
-          reference: 'users',
+        await FirebaseFirestore.setDocument({
+          reference: 'users/' + result.user.uid,
           data: {
             uid: result.user.uid,
             email: result.user.email,
-            role: 'user',
+            role: result.user.email === ADMIN_EMAIL ? 'admin' : 'user',
             createdAt: new Date().toISOString(),
-          }
-        }).catch(err => console.log('Firestore doc might already exist or error:', err));
+          },
+          merge: true
+        }).catch(err => console.log('Firestore set error:', err));
       }
 
       onSuccess(result.user);
