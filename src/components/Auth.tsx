@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { FirebaseFirestore } from '@capacitor-firebase/firestore';
-import { Mail, Lock, LogIn, UserPlus, Chrome, GraduationCap, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, LogIn, UserPlus, Chrome, GraduationCap, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AuthProps {
@@ -13,7 +13,9 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const ADMIN_EMAIL = 'sandeepfalse456@gmail.com';
 
@@ -85,6 +87,26 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
       setError(err.message || 'Google Sign-In failed.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim() || !email.includes('@')) {
+      setError('Please enter a valid email address first.');
+      return;
+    }
+
+    setError('');
+    setSuccess('');
+    setResetLoading(true);
+    try {
+      await FirebaseAuthentication.sendPasswordResetEmail({ email: email.trim() });
+      setSuccess('Password reset link sent! Please check your inbox.');
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      setError(err.message || 'Failed to send reset email. Please try again.');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -165,11 +187,24 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
                   required
                 />
               </div>
+              {isLogin && (
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    disabled={resetLoading || loading}
+                    className="text-xs font-bold text-slate-400 hover:text-purple-400 transition-colors uppercase tracking-wider disabled:opacity-50"
+                  >
+                    {resetLoading ? 'Sending...' : 'Forgot Password?'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <AnimatePresence>
               {error && (
                 <motion.div 
+                   key="error"
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
@@ -177,6 +212,18 @@ const Auth: React.FC<AuthProps> = ({ onSuccess }) => {
                 >
                   <AlertCircle className="w-4 h-4 flex-shrink-0" />
                   <p>{error}</p>
+                </motion.div>
+              )}
+              {success && (
+                <motion.div 
+                  key="success"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 text-sm"
+                >
+                  <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  <p>{success}</p>
                 </motion.div>
               )}
             </AnimatePresence>

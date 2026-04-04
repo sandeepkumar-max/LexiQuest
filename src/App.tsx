@@ -21,6 +21,8 @@ interface DictDefinition { definition: string; example?: string; synonyms: strin
 interface DictMeaning { partOfSpeech: string; definitions: DictDefinition[]; synonyms: string[]; antonyms: string[]; }
 interface DictEntry { word: string; phonetic?: string; phonetics: DictPhonetic[]; meanings: DictMeaning[]; }
 
+const SUPER_ADMIN_UID = 'lhC0gmgX3rR099IiQKFwCRdrRhh2';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('learn');
   const [customWords, setCustomWords] = useState<{ word: string, meaning: string, example: string }[]>([]);
@@ -44,6 +46,7 @@ export default function App() {
   const [profileImage, setProfileImage] = useState(() => localStorage.getItem('profileImage') || '');
   const [adminEmails, setAdminEmails] = useState<string[]>([]);
   const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [premiumUsers, setPremiumUsers] = useState<any[]>([]);
 
   // AdMob State
   const [adInitialized, setAdInitialized] = useState(false);
@@ -118,6 +121,8 @@ export default function App() {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [wordsToConfirm, setWordsToConfirm] = useState<{ word: string, meaning: string, example: string }[]>([]);
   const [clearConfirmModalOpen, setClearConfirmModalOpen] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteInput, setDeleteInput] = useState('');
 
   // Learn State
   const [learnPage, setLearnPage] = useState(0);
@@ -126,8 +131,8 @@ export default function App() {
   const allLearnWords = useMemo(() => {
     const combined = [...LEARN_WORDS, ...customWords, ...sharedWords];
     if (!learnSearchQuery.trim()) return combined;
-    return combined.filter(w => 
-      w.word.toLowerCase().includes(learnSearchQuery.toLowerCase()) || 
+    return combined.filter(w =>
+      w.word.toLowerCase().includes(learnSearchQuery.toLowerCase()) ||
       w.meaning.toLowerCase().includes(learnSearchQuery.toLowerCase())
     );
   }, [customWords, sharedWords, learnSearchQuery]);
@@ -154,6 +159,16 @@ export default function App() {
   // Bulk Import State
   const [bulkImportText, setBulkImportText] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+
+  // Scroll to top when test results are shown
+  useEffect(() => {
+    if (testState === 'results') {
+      const scrollContainer = document.querySelector('.overflow-y-auto');
+      if (scrollContainer) {
+        scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+  }, [testState]);
 
   // Initialize AdMob and setup periodic interstitial
   useEffect(() => {
@@ -205,7 +220,7 @@ export default function App() {
         const result = await FirebaseAuthentication.getCurrentUser();
         if (result.user) {
           setUser(result.user);
-          
+
           // 1. Fetch authorized admin emails
           const adminDoc = await FirebaseFirestore.getDocument({ reference: 'config/admins' });
           let authorizedEmails: string[] = [];
@@ -217,13 +232,16 @@ export default function App() {
           // 2. Fetch role from Firestore
           const doc = await FirebaseFirestore.getDocument({ reference: 'users/' + result.user.uid });
           const role = (doc.snapshot?.data as any)?.role;
-          const isEmailAdmin = authorizedEmails.includes(result.user.email?.toLowerCase() || '') || result.user.email === 'sandeepfalse456@gmail.com';
+          const isSuperAdmin = result.user.uid === SUPER_ADMIN_UID;
+          const isPremiumUser = (doc.snapshot?.data as any)?.premium === true;
 
-          if (role === 'admin' || isEmailAdmin) {
-            setIsAdminAuthenticated(true);
+          if (isSuperAdmin || isPremiumUser) {
+            if (isSuperAdmin) setIsAdminAuthenticated(true);
             setIsPremium(true);
-            
+            localStorage.setItem('isPremium', 'true');
+
             // Sync role to Firestore if not already set but is in email list
+            const isEmailAdmin = authorizedEmails.includes(result.user.email?.toLowerCase() || '') || result.user.email === 'sandeepfalse456@gmail.com';
             if (role !== 'admin' && isEmailAdmin) {
               await FirebaseFirestore.setDocument({
                 reference: 'users/' + result.user.uid,
@@ -247,14 +265,16 @@ export default function App() {
       if (result.user) {
         const adminDoc = await FirebaseFirestore.getDocument({ reference: 'config/admins' });
         const authorizedEmails = (adminDoc.snapshot?.data as any)?.emails || [];
-        
+
         const doc = await FirebaseFirestore.getDocument({ reference: 'users/' + result.user.uid });
         const role = (doc.snapshot?.data as any)?.role;
-        const isEmailAdmin = authorizedEmails.includes(result.user.email?.toLowerCase() || '') || result.user.email === 'sandeepfalse456@gmail.com';
+        const isSuperAdmin = result.user.uid === SUPER_ADMIN_UID;
+        const isPremiumUser = (doc.snapshot?.data as any)?.premium === true;
 
-        if (role === 'admin' || isEmailAdmin) {
-          setIsAdminAuthenticated(true);
+        if (isSuperAdmin || isPremiumUser) {
+          if (isSuperAdmin) setIsAdminAuthenticated(true);
           setIsPremium(true);
+          localStorage.setItem('isPremium', 'true');
         }
       } else {
         setIsAdminAuthenticated(false);
@@ -282,6 +302,26 @@ export default function App() {
     fetchSharedWords();
   }, [user]); // Re-fetch on login
 
+  // Fetch Premium Users for Admin
+  useEffect(() => {
+    if (!isAdminAuthenticated || activeTab !== 'admin') return;
+
+    const fetchPremiumUsers = async () => {
+      try {
+        const { snapshots } = await FirebaseFirestore.getCollection({ reference: 'users' });
+        if (snapshots) {
+          const premiums = snapshots
+            .map(s => s.data as any)
+            .filter(u => u.premium === true);
+          setPremiumUsers(premiums);
+        }
+      } catch (err) {
+        console.error('Failed to fetch premium users:', err);
+      }
+    };
+    fetchPremiumUsers();
+  }, [isAdminAuthenticated, activeTab]);
+
   const handleSignOut = async () => {
     const { value } = await Dialog.confirm({
       title: 'Sign Out',
@@ -300,38 +340,40 @@ export default function App() {
   };
 
   const handleDeleteAccount = async () => {
-    const { value } = await Dialog.confirm({
-      title: 'Delete Account',
-      message: 'Are you sure? This will permanently delete your account and all your progress. This action cannot be undone.',
-      okButtonTitle: 'Delete Forever',
-      cancelButtonTitle: 'Cancel',
-    });
+    setDeleteModalOpen(true);
+    setDeleteInput('');
+  };
 
-    if (value) {
-      try {
-        setAuthLoading(true);
-        // Delete user's document from Firestore if it exists
-        if (user?.uid) {
-          await FirebaseFirestore.deleteDocument({ reference: 'users/' + user.uid }).catch(() => {});
-        }
-        
-        // Delete the user from Firebase Auth
-        await FirebaseAuthentication.deleteUser();
-        
-        // Clear local storage
-        localStorage.clear();
-        setUser(null);
-        setAlertMessage("Your account has been deleted. We're sorry to see you go! ✨");
-      } catch (err: any) {
-        console.error('Delete account error', err);
-        if (err.message?.includes('recent-login')) {
-          setAlertMessage('For security, please sign out and sign in again before deleting your account.');
-        } else {
-          setAlertMessage('Could not delete account. Please try again or contact support at sandeepkumarspj290@gmail.com.');
-        }
-      } finally {
-        setAuthLoading(false);
+  const confirmDeleteAccount = async () => {
+    if (deleteInput !== 'yes delete my account') {
+      setAlertMessage('Please type the exact phrase to confirm deletion.');
+      return;
+    }
+
+    try {
+      setAuthLoading(true);
+      setDeleteModalOpen(false);
+      // Delete user's document from Firestore if it exists
+      if (user?.uid) {
+        await FirebaseFirestore.deleteDocument({ reference: 'users/' + user.uid }).catch(() => { });
       }
+
+      // Delete the user from Firebase Auth
+      await FirebaseAuthentication.deleteUser();
+
+      // Clear local storage
+      localStorage.clear();
+      setUser(null);
+      setAlertMessage("Your account has been deleted. We're sorry to see you go! ✨");
+    } catch (err: any) {
+      console.error('Delete account error', err);
+      if (err.message?.includes('recent-login')) {
+        setAlertMessage('For security, please sign out and sign in again before deleting your account.');
+      } else {
+        setAlertMessage('Could not delete account. Please try again or contact support at <sandeepkumarspj290@gmail.com>.');
+      }
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -398,7 +440,7 @@ export default function App() {
     setXp(prev => {
       const newXp = prev + amount;
       localStorage.setItem('xp', newXp.toString());
-      
+
       // Level logic: level 1 is 0-100, level 2 is 100-300, level 3 is 300-600 (quadratic)
       const nextLevelThreshold = level * 100 * level;
       if (newXp >= nextLevelThreshold) {
@@ -550,7 +592,7 @@ export default function App() {
 
         if (reminderEnabled) {
           const [hours, minutes] = reminderTime.split(':').map(Number);
-          
+
           await LocalNotifications.schedule({
             notifications: [
               {
@@ -708,12 +750,12 @@ export default function App() {
 
       const meaning = entry.meanings[0].definitions[0].definition;
       const example = entry.meanings[0].definitions[0].example || 'No example provided.';
-      
+
       await FirebaseFirestore.setDocument({
         reference: 'shared_words/' + word,
         data: { word, meaning, example }
       });
-      
+
       setAlertMessage(`"${word}" added to Global Dictionary! ✨`);
       // Update local sharedWords state
       const { snapshots } = await FirebaseFirestore.getCollection({ reference: 'shared_words' });
@@ -758,7 +800,7 @@ export default function App() {
     if (newCustomWords.length > 0) {
       if (isAdminAuthenticated) {
         // Admins save to Firestore shared_words
-        const savePromises = newCustomWords.map(w => 
+        const savePromises = newCustomWords.map(w =>
           FirebaseFirestore.setDocument({
             reference: 'shared_words/' + w.word.replace(/\s+/g, '_'),
             data: w
@@ -947,10 +989,10 @@ export default function App() {
 
   const startTest = (mode: 'listen-mcq' | 'listen-type' | 'visual-mcq' | 'meaning-mcq') => {
     setTestMode(mode);
-    
+
     // Combine all sources: Default, Custom (Local), and Shared (Global)
     const allSources = [...LEARN_WORDS, ...customWords, ...sharedWords];
-    
+
     // Ensure uniqueness by word (case-insensitive)
     const uniqueMap = new Map();
     allSources.forEach(item => {
@@ -959,12 +1001,12 @@ export default function App() {
         uniqueMap.set(key, item);
       }
     });
-    
+
     const uniqueWordsList = Array.from(uniqueMap.values());
-    
+
     // Fully randomize the entire list every time
     const shuffled = uniqueWordsList.sort(() => 0.5 - Math.random());
-    
+
     // Select 10 words for this session
     const selected = shuffled.slice(0, 10).map(item => item.word);
     setTestWords(selected);
@@ -1124,14 +1166,14 @@ export default function App() {
 
   const handleBulkImport = async () => {
     if (!bulkImportText.trim()) return;
-    
+
     setIsImporting(true);
     try {
       const existingWords = new Set(sharedWords.map(w => w.word.toLowerCase()));
       const lines = bulkImportText.split('\n').filter(line => line.trim());
       const wordsToSave: { word: string, meaning: string, example: string }[] = [];
       let skippedCount = 0;
-      
+
       lines.forEach(line => {
         const [word, meaning, example] = line.split('|').map(s => s.trim());
         if (word && meaning) {
@@ -1150,17 +1192,17 @@ export default function App() {
       });
 
       if (wordsToSave.length === 0) {
-        setAlertMessage(skippedCount > 0 
+        setAlertMessage(skippedCount > 0
           ? `All ${skippedCount} words already exist in the Global Dictionary.`
           : "No valid words found. Format: Word | Meaning | Example");
         return;
       }
 
       // Batch Save (one by one for now but with Promise.all for speed)
-      const batchSize = 100; 
+      const batchSize = 100;
       for (let i = 0; i < wordsToSave.length; i += batchSize) {
         const chunk = wordsToSave.slice(i, i + batchSize);
-        await Promise.all(chunk.map(w => 
+        await Promise.all(chunk.map(w =>
           FirebaseFirestore.setDocument({
             reference: 'shared_words/' + w.word,
             data: w
@@ -1171,11 +1213,11 @@ export default function App() {
       const msg = `Successfully imported ${wordsToSave.length} words! ✨` + (skippedCount > 0 ? ` (${skippedCount} duplicates skipped)` : "");
       setAlertMessage(msg);
       setBulkImportText('');
-      
+
       // Update local shared words state
       const { snapshots } = await FirebaseFirestore.getCollection({ reference: 'shared_words' });
       if (snapshots) setSharedWords(snapshots.map(s => s.data as any));
-      
+
     } catch (err) {
       console.error('Bulk import error:', err);
       setAlertMessage('Failed to import words. Check your connection.');
@@ -1189,18 +1231,31 @@ export default function App() {
     const desc = type === 'monthly' ? 'Monthly Premium Subscription' : 'Yearly Premium Subscription';
 
     const options = {
-      key: 'rzp_test_SYZJko9XAmhCGw',
+      key: 'rzp_live_SZOaWBFXaSLIby',
       amount,
       currency: 'INR',
       name: 'LexiQuest',
       description: desc,
       image: 'https://api.iconify.design/lucide:book.svg',
-      handler: function (response: any) {
+      handler: async function (response: any) {
         if (response.razorpay_payment_id) {
-          setIsPremium(true);
-          localStorage.setItem('isPremium', 'true');
-          setSubscriptionModalOpen(false);
-          setAlertMessage(`Welcome to Premium! Your ${type} plan is now active. ✨`);
+          try {
+            setIsPremium(true);
+            localStorage.setItem('isPremium', 'true');
+            if (user?.uid) {
+              await FirebaseFirestore.setDocument({
+                reference: 'users/' + user.uid,
+                data: { premium: true },
+                merge: true
+              });
+            }
+            setSubscriptionModalOpen(false);
+            setAlertMessage(`Welcome to Premium! Your ${type} plan is now active. ✨`);
+          } catch (err) {
+            console.error('Failed to update premium status in Firestore:', err);
+            setSubscriptionModalOpen(false);
+            setAlertMessage(`Payment successful, but we had trouble updating your profile online. Premium features are active locally!`);
+          }
         }
       },
       prefill: {
@@ -1245,7 +1300,7 @@ export default function App() {
               <Star className="w-3 h-3 fill-amber-500" /> PRO
             </button>
           )}
-          <button 
+          <button
             onClick={() => setActiveTab('profile')}
             className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors ${activeTab === 'profile' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-100'}`}
           >
@@ -1338,71 +1393,70 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                  <div className="flex flex-col items-start sm:items-end gap-3 w-full sm:w-auto">
-                    <div className="flex items-center justify-between sm:justify-start gap-3 bg-indigo-50 px-4 py-2.5 rounded-xl border border-indigo-100 w-full sm:w-auto">
-                      <div className="flex items-center gap-2">
-                        <GraduationCap className="w-4 h-4 text-indigo-600" />
-                        <span className="text-sm font-semibold text-indigo-900">Avg Score: {averageScore.toFixed(1)}%</span>
-                      </div>
-                      <div className="w-px h-4 bg-indigo-200 mx-1"></div>
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-indigo-600" />
-                        <span className="text-sm font-semibold text-indigo-900">Tests: {totalTestsTaken}</span>
-                      </div>
+                <div className="flex flex-col items-start sm:items-end gap-3 w-full sm:w-auto">
+                  <div className="flex items-center justify-between sm:justify-start gap-3 bg-indigo-50 px-4 py-2.5 rounded-xl border border-indigo-100 w-full sm:w-auto">
+                    <div className="flex items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-indigo-600" />
+                      <span className="text-sm font-semibold text-indigo-900">Avg Score: {averageScore.toFixed(1)}%</span>
                     </div>
-                    <div className="text-sm text-gray-500 font-medium whitespace-nowrap self-end">
-                      Page {learnPage + 1} of {totalLearnPages}
+                    <div className="w-px h-4 bg-indigo-200 mx-1"></div>
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-indigo-600" />
+                      <span className="text-sm font-semibold text-indigo-900">Tests: {totalTestsTaken}</span>
                     </div>
+                  </div>
+                  <div className="text-sm text-gray-500 font-medium whitespace-nowrap self-end">
+                    Page {learnPage + 1} of {totalLearnPages}
                   </div>
                 </div>
+              </div>
 
-                {/* Search Box */}
-                <div className="mb-8 relative group">
-                  <div className="relative">
-                    <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isPremium || isAdminAuthenticated ? 'text-gray-400' : 'text-indigo-300'}`} />
-                    <input
-                      type="text"
-                      value={learnSearchQuery}
-                      onChange={(e) => {
-                        if (isPremium || isAdminAuthenticated) {
-                          setLearnSearchQuery(e.target.value);
-                        } else {
-                          setSubscriptionModalOpen(true);
-                        }
-                      }}
-                      placeholder={isPremium || isAdminAuthenticated ? "Search words or meanings..." : "Unlock Search with Premium"}
-                      readOnly={!isPremium && !isAdminAuthenticated}
-                      className={`w-full pl-12 pr-4 py-4 bg-white border rounded-2xl shadow-sm outline-none transition-all ${
-                        isPremium || isAdminAuthenticated 
-                          ? 'border-gray-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10' 
-                          : 'border-indigo-100 bg-indigo-50/30 cursor-pointer placeholder-indigo-300'
+              {/* Search Box */}
+              <div className="mb-8 relative group">
+                <div className="relative">
+                  <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isPremium || isAdminAuthenticated ? 'text-gray-400' : 'text-indigo-300'}`} />
+                  <input
+                    type="text"
+                    value={learnSearchQuery}
+                    onChange={(e) => {
+                      if (isPremium || isAdminAuthenticated) {
+                        setLearnSearchQuery(e.target.value);
+                      } else {
+                        setSubscriptionModalOpen(true);
+                      }
+                    }}
+                    placeholder={isPremium || isAdminAuthenticated ? "Search words or meanings..." : "Unlock Search with Premium"}
+                    readOnly={!isPremium && !isAdminAuthenticated}
+                    className={`w-full pl-12 pr-4 py-4 bg-white border rounded-2xl shadow-sm outline-none transition-all ${isPremium || isAdminAuthenticated
+                      ? 'border-gray-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'
+                      : 'border-indigo-100 bg-indigo-50/30 cursor-pointer placeholder-indigo-300'
                       }`}
-                      onClick={() => {
-                        if (!isPremium && !isAdminAuthenticated) {
-                          setSubscriptionModalOpen(true);
-                        }
-                      }}
-                    />
-                    {(!isPremium && !isAdminAuthenticated) && (
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                        <Lock className="w-5 h-5 text-indigo-400" />
-                      </div>
-                    )}
-                    {learnSearchQuery && (
-                      <button
-                        onClick={() => setLearnSearchQuery('')}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full transition-colors"
-                      >
-                        <X className="w-4 h-4 text-gray-400" />
-                      </button>
-                    )}
-                  </div>
-                  {!isPremium && !isAdminAuthenticated && (
-                    <p className="mt-2 text-[10px] font-bold text-indigo-400 uppercase tracking-widest ml-1">
-                      ✨ Subscribe once to unlock search forever
-                    </p>
+                    onClick={() => {
+                      if (!isPremium && !isAdminAuthenticated) {
+                        setSubscriptionModalOpen(true);
+                      }
+                    }}
+                  />
+                  {(!isPremium && !isAdminAuthenticated) && (
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                      <Lock className="w-5 h-5 text-indigo-400" />
+                    </div>
+                  )}
+                  {learnSearchQuery && (
+                    <button
+                      onClick={() => setLearnSearchQuery('')}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
                   )}
                 </div>
+                {!isPremium && !isAdminAuthenticated && (
+                  <p className="mt-2 text-[10px] font-bold text-indigo-400 uppercase tracking-widest ml-1">
+                    ✨ Subscribe once to unlock search forever
+                  </p>
+                )}
+              </div>
 
               {/* Daily Challenge Card */}
               {dailyWords.length > 0 && (
@@ -1417,7 +1471,7 @@ export default function App() {
                   </div>
 
                   <AnimatePresence mode="wait">
-                    <motion.div 
+                    <motion.div
                       key={currentDailyIndex}
                       drag="x"
                       dragConstraints={{ left: 0, right: 0 }}
@@ -1472,13 +1526,13 @@ export default function App() {
 
                         <div className="flex flex-col w-full gap-4 z-10">
                           <div className="flex gap-4">
-                            <button 
+                            <button
                               onClick={() => playWord(dailyWords[currentDailyIndex].word)}
                               className="flex-1 py-4 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-sm hover:bg-indigo-100 transition-all flex items-center justify-center gap-2"
                             >
                               <Volume2 className="w-5 h-5" /> Speak
                             </button>
-                            <button 
+                            <button
                               onClick={() => {
                                 // Simple mastery logic for local words
                                 if (dailyWordsLearned < 5) {
@@ -1486,7 +1540,7 @@ export default function App() {
                                   setDailyWordsLearned(newLearned);
                                   localStorage.setItem('dailyWordsLearned', newLearned.toString());
                                   addXp(20);
-                                  
+
                                   if (newLearned === 5) {
                                     addXp(100);
                                     setAlertMessage("🏆 Challenge Complete! You mastered the Daily 5 and earned a +100 XP Bonus!");
@@ -1503,7 +1557,7 @@ export default function App() {
                           </div>
 
                           <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                            <button 
+                            <button
                               onClick={() => setCurrentDailyIndex(prev => Math.max(0, prev - 1))}
                               disabled={currentDailyIndex === 0}
                               className="p-4 text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors"
@@ -1512,13 +1566,13 @@ export default function App() {
                             </button>
                             <div className="flex gap-2">
                               {dailyWords.map((_, idx) => (
-                                <div 
-                                  key={idx} 
-                                  className={`w-2 h-2 rounded-full transition-all ${idx === currentDailyIndex ? 'w-6 bg-indigo-600' : 'bg-slate-200'}`} 
+                                <div
+                                  key={idx}
+                                  className={`w-2 h-2 rounded-full transition-all ${idx === currentDailyIndex ? 'w-6 bg-indigo-600' : 'bg-slate-200'}`}
                                 />
                               ))}
                             </div>
-                            <button 
+                            <button
                               onClick={() => setCurrentDailyIndex(prev => Math.min(dailyWords.length - 1, prev + 1))}
                               disabled={currentDailyIndex === dailyWords.length - 1}
                               className="p-4 text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors"
@@ -1533,7 +1587,7 @@ export default function App() {
                 </div>
               )}
 
-              <motion.div 
+              <motion.div
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8 cursor-grab active:cursor-grabbing"
                 drag="x"
                 dragConstraints={{ left: 0, right: 0 }}
@@ -1873,16 +1927,16 @@ export default function App() {
         {activeTab === 'profile' && (
           <div className="flex-1 p-6 lg:p-10 overflow-y-auto bg-slate-50">
             <div className="max-w-2xl mx-auto">
-              <div className="flex items-center gap-6 mb-10">
-                <div className="relative">
-                  <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[2rem] flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-indigo-200 overflow-hidden">
+              <div className="flex flex-row items-center gap-4 sm:gap-6 mb-6 sm:mb-8">
+                <div className="relative flex-shrink-0">
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[1.5rem] sm:rounded-[2rem] flex items-center justify-center text-white text-2xl sm:text-3xl font-black shadow-xl overflow-hidden">
                     {profileImage ? (
                       <img src={profileImage} alt="Profile" className="w-full h-full object-cover" />
                     ) : (
                       user?.displayName?.[0] || displayName?.[0] || user?.email?.[0]?.toUpperCase() || 'U'
                     )}
                   </div>
-                  <button 
+                  <button
                     onClick={async () => {
                       if (Capacitor.isNativePlatform()) {
                         try {
@@ -1906,33 +1960,33 @@ export default function App() {
                     <Plus className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   {isEditingProfile ? (
                     <div className="flex flex-col gap-2">
-                       <input 
-                        type="text" 
-                        value={displayName} 
+                      <input
+                        type="text"
+                        value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
-                        className="text-xl font-black text-slate-900 bg-slate-100 px-3 py-2 rounded-xl outline-none border border-indigo-200 focus:border-indigo-600 transition-colors"
+                        className="text-lg sm:text-xl font-black text-slate-900 bg-slate-100 px-3 py-1.5 rounded-xl outline-none border border-indigo-200 focus:border-indigo-600 transition-colors w-full"
                         autoFocus
-                       />
-                       <button 
-                        onClick={() => { 
-                          setIsEditingProfile(false); 
+                      />
+                      <button
+                        onClick={() => {
+                          setIsEditingProfile(false);
                           localStorage.setItem('userName', displayName);
                           setAlertMessage("Profile updated! ✨");
                         }}
-                        className="bg-indigo-600 text-white text-[10px] font-black py-1.5 rounded-lg uppercase w-fit px-4"
-                       > Save Changes </button>
+                        className="bg-indigo-600 text-white text-[10px] font-black py-1.5 rounded-lg uppercase w-fit px-4 hover:bg-indigo-700 transition-colors"
+                      > Save Changes </button>
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-center gap-3">
-                        <h2 className="text-3xl font-black text-slate-900 mb-1">{displayName}</h2>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 truncate max-w-[200px] sm:max-w-none">{displayName}</h2>
                         <button onClick={() => setIsEditingProfile(true)} className="p-1 text-slate-400 hover:text-indigo-600"><Sliders className="w-4 h-4" /></button>
                       </div>
-                      <p className="text-slate-500 font-medium flex items-center gap-2">
-                        <Star className={`w-4 h-4 ${isPremium ? 'text-amber-500 fill-amber-500' : 'text-slate-300'}`} />
+                      <p className="text-slate-500 font-bold text-xs flex items-center gap-2">
+                        <Star className={`w-3.5 h-3.5 ${isPremium ? 'text-amber-500 fill-amber-500' : 'text-slate-300'}`} />
                         {isPremium ? 'Premium Member' : 'Free Explorer'}
                       </p>
                     </>
@@ -1941,7 +1995,7 @@ export default function App() {
               </div>
 
               {/* Stats Cards */}
-              <div className="grid grid-cols-2 gap-4 mb-8">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
                   <div className="flex items-center gap-2 text-indigo-600 mb-2">
                     <GraduationCap className="w-5 h-5" />
@@ -1949,7 +2003,7 @@ export default function App() {
                   </div>
                   <p className="text-2xl font-black text-slate-900">Level {level}</p>
                   <div className="mt-2 w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <motion.div 
+                    <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${(xp / (level * 100 * level)) * 100}%` }}
                       className="h-full bg-indigo-600"
@@ -1968,7 +2022,7 @@ export default function App() {
               </div>
 
               {/* Streak Shield Section */}
-              <div className="mb-8 p-5 bg-gradient-to-r from-orange-500 to-amber-500 rounded-3xl text-white shadow-lg shadow-orange-100 flex items-center justify-between">
+              <div className="mb-6 sm:mb-8 p-5 bg-gradient-to-r from-orange-500 to-amber-500 rounded-2xl sm:rounded-3xl text-white shadow-lg shadow-orange-100 flex items-center justify-between">
                 <div>
                   <h4 className="font-black flex items-center gap-2">
                     <Star className="w-5 h-5 fill-white" /> Streak Shield
@@ -1978,22 +2032,22 @@ export default function App() {
                 <div className="text-right">
                   <p className="text-2xl font-black">{streakShields} Available</p>
                   {!isPremium ? (
-                    <button 
+                    <button
                       onClick={() => setSubscriptionModalOpen(true)}
                       className="text-[10px] font-black bg-white/20 px-3 py-1 rounded-full uppercase hover:bg-white/30 transition-colors"
                     >
                       Premium Only
                     </button>
                   ) : (
-                     <p className="text-[10px] font-bold opacity-80">Refills Weekly</p>
+                    <p className="text-[10px] font-bold opacity-80">Refills Weekly</p>
                   )}
                 </div>
               </div>
 
               {/* Daily Missions Section */}
-              <div className="mb-8">
+              <div className="mb-6 sm:mb-8">
                 <h3 className="text-xl font-black text-slate-900 mb-4 flex items-center gap-2">
-                   <Target className="w-6 h-6 text-indigo-600" /> Daily Missions
+                  <Target className="w-6 h-6 text-indigo-600" /> Daily Missions
                 </h3>
                 <div className="space-y-3">
                   {missions.map(m => (
@@ -2006,7 +2060,7 @@ export default function App() {
                         {m.completed && <CheckCircle className="w-5 h-5 text-green-500" />}
                       </div>
                       <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div 
+                        <div
                           className={`h-full transition-all duration-500 ${m.completed ? 'bg-green-500' : 'bg-indigo-600'}`}
                           style={{ width: `${Math.min(100, (m.current / m.goal) * 100)}%` }}
                         />
@@ -2037,7 +2091,7 @@ export default function App() {
 
               {/* Other Options */}
               <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden mb-10">
-                <button 
+                <button
                   onClick={handleShareApp}
                   className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors border-b border-slate-100"
                 >
@@ -2049,7 +2103,7 @@ export default function App() {
                   </div>
                   <ChevronLeft className="w-5 h-5 text-slate-300 rotate-180" />
                 </button>
-                <button 
+                <button
                   onClick={() => setSpeechSettingsOpen(true)}
                   className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors border-b border-slate-100"
                 >
@@ -2061,7 +2115,7 @@ export default function App() {
                   </div>
                   <ChevronLeft className="w-5 h-5 text-slate-300 rotate-180" />
                 </button>
-                <button 
+                <button
                   onClick={() => { setDraftReminderTime(reminderTime); setReminderPopoverOpen(o => !o); }}
                   className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors border-b border-slate-100"
                 >
@@ -2076,7 +2130,7 @@ export default function App() {
                     <ChevronLeft className="w-5 h-5 text-slate-300 rotate-180" />
                   </div>
                 </button>
-                <button 
+                <button
                   onClick={handleSignOut}
                   className="w-full px-6 py-4 flex items-center justify-between hover:bg-red-50 transition-colors border-b border-slate-100"
                 >
@@ -2087,7 +2141,7 @@ export default function App() {
                     <span className="font-bold text-red-600">Sign Out</span>
                   </div>
                 </button>
-                <button 
+                <button
                   onClick={handleDeleteAccount}
                   className="w-full px-6 py-4 flex items-center justify-between hover:bg-rose-100 transition-colors"
                 >
@@ -2100,14 +2154,14 @@ export default function App() {
                 </button>
               </div>
 
-               {!isAdminAuthenticated && (
-                <button 
+              {user?.uid === SUPER_ADMIN_UID && !isAdminAuthenticated && (
+                <button
                   onClick={() => setPinModalOpen(true)}
                   className="w-full py-4 text-slate-400 text-xs font-bold uppercase tracking-widest hover:text-indigo-600 transition-colors mb-10"
                 >
                   Admin Access
                 </button>
-               )}
+              )}
             </div>
           </div>
         )}
@@ -2126,55 +2180,55 @@ export default function App() {
 
               {!isPremium && !isAdminAuthenticated ? (
                 <div className="bg-indigo-50 rounded-[2.5rem] p-10 text-center border border-indigo-100 shadow-sm relative overflow-hidden">
-                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent opacity-50" />
-                   <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg text-indigo-600">
-                     <Lock className="w-10 h-10" />
-                   </div>
-                   <h3 className="text-2xl font-black text-slate-900 mb-3">Premium Feature</h3>
-                   <p className="text-slate-600 mb-8 max-w-xs mx-auto">Access the full English dictionary with synonyms, antonyms and pronunciations.</p>
-                   <button 
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent opacity-50" />
+                  <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg text-indigo-600">
+                    <Lock className="w-10 h-10" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-900 mb-3">Premium Feature</h3>
+                  <p className="text-slate-600 mb-8 max-w-xs mx-auto">Access the full English dictionary with synonyms, antonyms and pronunciations.</p>
+                  <button
                     onClick={() => setSubscriptionModalOpen(true)}
                     className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
-                   >
-                     <Star className="w-5 h-5 fill-white" /> Unlock with Premium
-                   </button>
+                  >
+                    <Star className="w-5 h-5 fill-white" /> Unlock with Premium
+                  </button>
                 </div>
               ) : (
                 <>
                   {/* Search Box */}
                   <div className="flex gap-2 mb-6">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="text"
-                    value={dictQuery}
-                    onChange={e => setDictQuery(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') searchDictionary(); }}
-                    placeholder="Type a word and press Enter..."
-                    className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 outline-none bg-white text-gray-800 shadow-sm"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-                </div>
-                <button
-                  onClick={() => searchDictionary()}
-                  disabled={dictLoading || !dictQuery.trim()}
-                  className="px-5 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-2 shadow-sm"
-                >
-                  {dictLoading ? (
-                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4A8 8 0 0012 4z" />
-                    </svg>
-                  ) : (
-                    <Search className="w-4 h-4" />
-                  )}
-                  Search
-                </button>
-              </div>
-            </>
-          )}
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={dictQuery}
+                        onChange={e => setDictQuery(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') searchDictionary(); }}
+                        placeholder="Type a word and press Enter..."
+                        className="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 outline-none bg-white text-gray-800 shadow-sm"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                      />
+                    </div>
+                    <button
+                      onClick={() => searchDictionary()}
+                      disabled={dictLoading || !dictQuery.trim()}
+                      className="px-5 py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-2 shadow-sm"
+                    >
+                      {dictLoading ? (
+                        <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4A8 8 0 0012 4z" />
+                        </svg>
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
+                      Search
+                    </button>
+                  </div>
+                </>
+              )}
 
               {/* Error State */}
               {dictError && (
@@ -2357,7 +2411,7 @@ export default function App() {
                   onSubmit={async (e) => {
                     e.preventDefault();
                     if (!newAdminEmail.trim() || !newAdminEmail.includes('@')) return;
-                    
+
                     const updatedAdmins = [...adminEmails, newAdminEmail.trim().toLowerCase()];
                     try {
                       await FirebaseFirestore.setDocument({
@@ -2397,7 +2451,7 @@ export default function App() {
                     {adminEmails.map(email => (
                       <div key={email} className="flex items-center gap-1 px-3 py-1 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-200">
                         <span>{email}</span>
-                        <button 
+                        <button
                           onClick={async () => {
                             const updated = adminEmails.filter(e => e !== email);
                             await FirebaseFirestore.setDocument({
@@ -2603,13 +2657,41 @@ export default function App() {
                   </ul>
                 )}
               </div>
+
+              {/* Premium Users List */}
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mb-8">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                  Premium Users ({premiumUsers.length})
+                </h3>
+                <div className="space-y-3">
+                  {premiumUsers.length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">No premium users found.</p>
+                  ) : (
+                    premiumUsers.map((u, i) => (
+                      <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600 text-xs font-bold">
+                            {u.email?.[0]?.toUpperCase() || 'U'}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-800">{u.email}</p>
+                            <p className="text-[10px] text-slate-400">UID: {u.uid}</p>
+                          </div>
+                        </div>
+                        <span className="px-2 py-1 bg-green-100 text-green-700 text-[10px] font-bold rounded-md uppercase">Active</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {/* Modals Overlay */}
-        {(pinModalOpen || alertMessage || confirmModalOpen || clearConfirmModalOpen || reminderPopoverOpen) && (
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        {(pinModalOpen || alertMessage || confirmModalOpen || clearConfirmModalOpen || reminderPopoverOpen || deleteModalOpen) && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
 
             {/* Reminder Popover */}
             {reminderPopoverOpen && (
@@ -2619,14 +2701,14 @@ export default function App() {
                     <Clock className="w-6 h-6" />
                     Set Reminder
                   </h3>
-                  <button 
+                  <button
                     onClick={() => setReminderPopoverOpen(false)}
                     className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
-                
+
                 <div className="mb-8">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 text-center">Select your study time</p>
                   <input
@@ -2755,6 +2837,47 @@ export default function App() {
               </div>
             )}
 
+            {/* Delete Account Modal */}
+            {deleteModalOpen && (
+              <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl relative z-[60] border border-rose-100 animate-in fade-in zoom-in duration-300 text-center">
+                <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mx-auto mb-6 text-rose-600 shadow-lg shadow-rose-100">
+                  <Trash2 className="w-10 h-10" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 mb-2">Delete Account?</h3>
+                <p className="text-slate-500 mb-6 font-medium">
+                  This action is permanent and will delete all your progress, XP, and custom dictionary.
+                </p>
+
+                <div className="bg-rose-50 p-4 rounded-2xl mb-6 border border-rose-100">
+                  <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-2">To confirm, type exactly:</p>
+                  <p className="text-sm font-black text-slate-700 bg-white py-2 rounded-lg border border-rose-200 mb-3 select-none">yes delete my account</p>
+                  <input
+                    type="text"
+                    value={deleteInput}
+                    onChange={(e) => setDeleteInput(e.target.value)}
+                    placeholder="Type here..."
+                    className="w-full px-4 py-3 bg-white border-2 border-rose-100 rounded-xl focus:border-rose-500 focus:ring-0 outline-none text-center font-bold text-slate-800"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={confirmDeleteAccount}
+                    disabled={deleteInput !== 'yes delete my account'}
+                    className="w-full py-4 bg-rose-600 text-white rounded-2xl font-bold hover:bg-rose-700 transition-colors shadow-lg shadow-rose-100 disabled:opacity-50 disabled:shadow-none"
+                  >
+                    Delete Forever
+                  </button>
+                  <button
+                    onClick={() => { setDeleteModalOpen(false); setDeleteInput(''); }}
+                    className="w-full py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -2841,7 +2964,7 @@ export default function App() {
 
               <div className="p-6">
                 <div className="grid grid-cols-2 gap-4 mb-6">
-                  <button 
+                  <button
                     onClick={() => handleSubscribe('monthly')}
                     className="p-5 rounded-3xl border-2 border-slate-100 hover:border-indigo-600 transition-all text-left group bg-slate-50 hover:bg-white"
                   >
@@ -2849,7 +2972,7 @@ export default function App() {
                     <p className="text-2xl font-black text-slate-900">₹199</p>
                     <p className="text-[10px] font-bold text-indigo-600 mt-2 group-hover:scale-105 transition-transform">Get Started →</p>
                   </button>
-                  <button 
+                  <button
                     onClick={() => handleSubscribe('yearly')}
                     className="p-5 rounded-3xl border-2 border-indigo-600 bg-indigo-50/50 text-left relative overflow-hidden"
                   >
@@ -2879,36 +3002,36 @@ export default function App() {
           </div>
         )}
 
-      {/* Level-Up Celebration Modal */}
-      <AnimatePresence>
-        {showLevelUp && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md"
-          >
-            <motion.div 
-              initial={{ scale: 0.8, y: 50 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center shadow-2xl border border-purple-100"
+        {/* Level-Up Celebration Modal */}
+        <AnimatePresence>
+          {showLevelUp && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md"
             >
-              <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-purple-200">
-                <Star className="w-12 h-12 text-white animate-pulse" />
-              </div>
-              <h2 className="text-3xl font-black text-slate-900 mb-2">LEVEL UP!</h2>
-              <p className="text-slate-500 mb-6 font-medium">You've reached <span className="text-purple-600 font-bold">Level {level}</span>. Your vocabulary is growing fast!</p>
-              <button 
-                onClick={() => setShowLevelUp(false)}
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-colors shadow-lg active:scale-95"
+              <motion.div
+                initial={{ scale: 0.8, y: 50 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center shadow-2xl border border-purple-100"
               >
-                Keep Learning
-              </button>
+                <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-3xl mx-auto mb-6 flex items-center justify-center shadow-lg shadow-purple-200">
+                  <Star className="w-12 h-12 text-white animate-pulse" />
+                </div>
+                <h2 className="text-3xl font-black text-slate-900 mb-2">LEVEL UP!</h2>
+                <p className="text-slate-500 mb-6 font-medium">You've reached <span className="text-purple-600 font-bold">Level {level}</span>. Your vocabulary is growing fast!</p>
+                <button
+                  onClick={() => setShowLevelUp(false)}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-colors shadow-lg active:scale-95"
+                >
+                  Keep Learning
+                </button>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
 
 
       </main>
